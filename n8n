@@ -1,0 +1,274 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "Assistente-Investimentos",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "241134a5-d177-46d6-a8dd-f1be32952122",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        -192,
+        192
+      ],
+      "webhookId": "087bcc03-6b20-4115-914a-211bfd960228"
+    },
+    {
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/mateusreis612/dio-lab-assistente-investimentos-rpa-n8n/main/docs/data.csv",
+        "options": {}
+      },
+      "id": "b4db0d2a-f6ee-4661-9181-1f22f50c8ad6",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const returnData = [];\n\n// O HTTP Request geralmente coloca a resposta em texto na propriedade \"data\"\n// Caso o seu campo se chame de outra forma, altere \"item.json.data\" abaixo.\nfor (const item of $input.all()) {\n    const csvText = item.json.data;\n\n    if (!csvText) continue;\n\n    // Divide o texto em linhas e remove espaços ou linhas vazias no final\n    const lines = csvText.trim().split('\\n');\n    \n    // Altere para ';' se o seu CSV for separado por ponto e vírgula\n    const separador = ','; \n    \n    // Extrai e limpa os cabeçalhos (primeira linha do CSV)\n    const headers = lines[0].split(separador).map(header => header.trim());\n\n    for (let i = 1; i < lines.length; i++) {\n        const currentLine = lines[i].split(separador);\n        let rowObject = {};\n\n        for (let j = 0; j < headers.length; j++) {\n            let headerName = headers[j];\n            let value = currentLine[j] ? currentLine[j].trim() : \"\";\n\n            // Verifica se é a coluna \"minimo\" (independentemente de estar em maiúsculas ou minúsculas)\n            if (headerName.toLowerCase() === 'minimo') {\n                // Troca vírgula por ponto caso o número venha no padrão brasileiro (ex: 1500,50 -> 1500.50)\n                let numeroLimpo = value.replace(',', '.');\n                \n                // Converte explicitamente para Number. Se vier vazio ou inválido, assume 0.\n                rowObject[headerName] = Number(numeroLimpo) || 0;\n            } else {\n                rowObject[headerName] = value;\n            }\n        }\n        \n        // Formato obrigatório do n8n para gerar novos itens no fluxo\n        returnData.push({ json: rowObject });\n    }\n}\n\nreturn returnData;"
+      },
+      "id": "25f29f43-cb48-4a73-a2b3-7e062b5443b3",
+      "name": "Code in JavaScript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "423ab051-72c9-45f4-9525-0b65cbd9b867",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        384,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];\n\nconst clientes = $('Webhook').first().json.body.clientes || [];\nconst produtos = $('Code in JavaScript').all().map(i => i.json);\n\nconst normaliza = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\n\nconst resultado = clientes.map(c => {\n  const nome = c.nome || '';\n  const perfil = normaliza(c.perfil);\n  let saldoNum = 0;\n  if (c.saldo) {\n    const limpo = String(c.saldo).replace(/[^0-9,]+/g, '').replace(',', '.');\n    saldoNum = parseFloat(limpo) || 0;\n  }\n\n  const elegiveis = produtos.filter(p => normaliza(p.perfil) === perfil && Number(p.minimo) <= saldoNum);\n  const escolhido = elegiveis.length ? elegiveis.map(p => p.produto + ' (' + p.rentabilidade + ')').join(', ') : 'Nenhum produto disponivel para o saldo atual';\n  const motivo = elegiveis.length\n    ? 'Produtos do perfil ' + c.perfil + ' com aplicacao minima compativel com o seu saldo.'\n    : 'O saldo atual e menor que o minimo dos produtos do perfil ' + c.perfil + '.';\n\n  const mensagens = [\n    'Ola ' + nome + ', separamos opcoes alinhadas ao seu perfil ' + c.perfil + '.',\n    nome + ', com base no seu perfil e saldo, estas sao as melhores opcoes para voce.',\n    'Opcoes escolhidas especialmente para voce, ' + nome + '.'\n  ];\n\n  return {\n    nome: nome,\n    email: c.email || '',\n    perfil: c.perfil || '',\n    saldo: saldoNum,\n    escolhido: escolhido,\n    motivo: motivo,\n    mensagem: pick(mensagens)\n  };\n});\n\nreturn resultado.map(r => ({ json: r }));"
+      },
+      "id": "796bbfaf-47cc-4d5f-ba8a-9c44e308d975",
+      "name": "Code in JavaScript1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fmtBRL = (n) => 'R$ ' + Number(n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\n\nreturn $input.all().map(item => {\n  const c = item.json;\n  return {\n    json: {\n      email_to: String(c.email || '').trim(),\n      nome: String(c.nome || '').trim(),\n      perfil: c.perfil,\n      saldo_texto: fmtBRL(c.saldo),\n      saldo_num: c.saldo,\n      recomendacao: c.escolhido,\n      motivo: c.motivo,\n      mensagem_base: c.mensagem || '',\n      copy_rules: {\n        idioma: 'pt-BR',\n        tom: 'amigavel e profissional',\n        tamanho: 'curto (4-6 linhas)',\n        evitar: ['promessas de ganho', 'garantias', 'linguagem agressiva']\n      }\n    }\n  };\n});"
+      },
+      "id": "bf9616da-7c82-4aaf-8cc5-4e7d7e3c0d93",
+      "name": "Code in JavaScript2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        752,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.6-flash",
+          "mode": "list",
+          "cachedResultName": "Gemini 3.6 Flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Escreva um e-mail curto em pt-BR para o cliente abaixo, sem prometer ganhos e sem garantias.\n\nCliente:\nNome: {{ $json.nome }}\nPerfil: {{ $json.perfil }}\nSaldo: {{ $json.saldo_texto }}\n\nProduto: {{ $json.recomendacao }}\nMotivo:{{ $json.motivo }}\n\nRetorne APENAS JSON com:\n{\n  \"subject\": \"...\",\n  \"text_body\": \"...\",\n  \"html_body\": \"...\"\n} "
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "2a5a00dc-6856-443c-8d2e-6a7d621316d3",
+      "name": "Message a model",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        912,
+        64
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "Lx8sDQygFAaD9Jq7",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $(\"Code in JavaScript2\").item.json.email_to }}",
+        "subject": "={{ JSON.parse($json.content.parts[0].text.replace(/```json|```/g, \"\").trim()).subject }}",
+        "message": "={{ JSON.parse($json.content.parts[0].text.replace(/```json|```/g, \"\").trim()).html_body }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "ef71553e-0497-4fa0-84e1-6aded0863c5c",
+      "name": "Send a message",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        192
+      ],
+      "webhookId": "cc6142b3-3012-40e0-b6bf-8ebd42d30ec7",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "ZHDY4tc24T0R05bl",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "d6e5aa71-4db4-4237-a9a3-bb50d0612314",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1328,
+        16
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "7ee434c2-3299-4de8-a5d4-4b26042c4aff",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5189c11aaae13fad8e71ba018f89ade88d1288547e909dedd0f7b5e0220cd3df"
+  },
+  "nodeGroups": [],
+  "id": "kqlWMdgR31v7C38q",
+  "tags": []
+}
